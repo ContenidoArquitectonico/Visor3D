@@ -46,34 +46,405 @@ scene.add(light);
 
 const ambient = new THREE.AmbientLight(0x404040);
 scene.add(ambient);
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor 3D Avanzado - Tesis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { --panel-width: 350px; }
+        body { margin: 0; font-family: 'Inter', sans-serif; background-color: #f3f4f6; color: #1f2937; display: flex; overflow: hidden; }
+        #main-content { flex-grow: 1; height: 100vh; position: relative; }
+        #container { width: 100%; height: 100%; }
+        canvas { display: block; }
+        #controls-panel {
+            width: var(--panel-width); height: 100vh; background-color: #ffffff;
+            box-shadow: 4px 0 20px -5px rgba(0,0,0,0.1); padding: 1.5rem;
+            display: flex; flex-direction: column; z-index: 20;
+            transition: margin-left 0.4s ease-in-out; flex-shrink: 0;
+        }
+        #controls-panel.hidden { margin-left: calc(-1 * var(--panel-width)); }
+        #views-gallery { flex-grow: 1; overflow-y: auto; margin-top: 1.5rem; padding-right: 0.5rem; }
+        #views-gallery::-webkit-scrollbar { width: 6px; }
+        #views-gallery::-webkit-scrollbar-track { background: #f1f1f1; }
+        #views-gallery::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px;}
+        #views-gallery::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
-const modelFiles = [
-  "01 TERRENO.glb", "02 PLINTOS.glb", "03 ESTRUCTURA VIGAS.glb", "04 PISOS.glb",
-  "05 COLUMNAS.glb", "06 PAREDES.glb", "07 TUMBADO.glb", "08 CERCHAS.glb",
-  "09 LATILLAS CERCHAS.glb", "10 PROTECTOR CUBIERTA.glb", "11 CUBIERTA.glb"
-];
+        .view-card {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.75rem; border-radius: 0.75rem; margin-bottom: 0.75rem; 
+            cursor: pointer; transition: all 0.2s ease-in-out; border: 1px solid #e5e7eb;
+        }
+        .view-card:hover { background-color: #f9fafb; transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.07); }
+        .view-card.active { background-color: #eef2ff; border-color: #6366f1; }
+        .view-card.assembled { border-left: 4px solid #34d399; }
+        .view-card .card-content { display: flex; align-items: center; }
+        .view-card img { width: 70px; height: 50px; object-fit: cover; border-radius: 0.5rem; margin-right: 1rem; }
+        .view-card .title { font-weight: 600; }
+        
+        #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.95); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        
+        #toggle-panel-btn {
+            position: fixed; top: 1.5rem; left: var(--panel-width); transform: translateX(1.25rem);
+            background-color: #fff; border-radius: 9999px; padding: 0.75rem; z-index: 25;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); transition: all 0.4s ease-in-out;
+        }
+        #toggle-panel-btn.panel-hidden { transform: translateX(calc(-1 * var(--panel-width) + 1.25rem)); }
 
-const loader = new GLTFLoader();
-modelFiles.forEach((file, idx) => {
-  loader.load(file, gltf => {
-    const model = gltf.scene;
-    model.position.y = idx * 1.5;
-    scene.add(model);
-  });
-});
+        #view-cube-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 120px;
+            height: 120px;
+            z-index: 15;
+        }
+        #mini-view-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 200px;
+            height: 150px;
+            z-index: 15;
+            border: 2px solid #fff;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            overflow: hidden;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="loading-overlay"><div class="text-lg font-medium">Cargando modelos 3D...</div></div>
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+    <button id="toggle-panel-btn" title="Ocultar/Mostrar panel">
+        <svg id="toggle-icon-open" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+        <svg id="toggle-icon-closed" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+    </button>
+    
+    <div id="controls-panel">
+        <h2 class="text-2xl font-bold border-b pb-4">Panel de Control</h2>
+        <div id="views-gallery"> <!-- Contenido generado por JS --> </div>
+    </div>
 
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animate();
-</script>
+    <div id="main-content">
+        <div id="container"></div>
+        <div id="view-cube-container"></div>
+        <div id="mini-view-container"></div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- Variables Globales ---
+        let mainScene, mainCamera, mainRenderer, mainControls;
+        let viewCubeScene, viewCubeCamera, viewCubeRenderer, viewCube;
+        let miniViewScene, miniViewCamera, miniViewRenderer, miniViewContent;
+        
+        let allModels = new THREE.Group(), currentView = 'Ensamblaje';
+        const modelFiles = [
+            { name: "Ensamblaje", file: null, imageUrl: "https://placehold.co/80x60/31343d/ffffff?text=General" },
+            { name: "Terreno", file: "01%20TERRENO.glb", imageUrl: "https://placehold.co/80x60/8c6d5b/ffffff?text=Terreno" },
+            { name: "Plintos", file: "02%20PLINTOS.glb", imageUrl: "https://placehold.co/80x60/9e9e9e/ffffff?text=Plintos" },
+            { name: "Estructura Vigas", file: "03%20ESTRUCTURA%20VIGAS.glb", imageUrl: "https://placehold.co/80x60/5d4037/ffffff?text=Vigas" },
+            { name: "Pisos", file: "04%20PISOS.glb", imageUrl: "https://placehold.co/80x60/a1887f/ffffff?text=Pisos" },
+            { name: "Columnas", file: "05%20COLUMNAS.glb", imageUrl: "https://placehold.co/80x60/6d4c41/ffffff?text=Columnas" },
+            { name: "Paredes", file: "06%20PAREDES.glb", imageUrl: "https://placehold.co/80x60/d7ccc8/ffffff?text=Paredes" },
+            { name: "Tumbado", file: "07%20TUMBADO.glb", imageUrl: "https://placehold.co/80x60/bcaaa4/ffffff?text=Tumbado" },
+            { name: "Cerchas", file: "08%20CERCHAS.glb", imageUrl: "https://placehold.co/80x60/8d6e63/ffffff?text=Cerchas" },
+            { name: "Latillas Cerchas", file: "09%20LATILLAS%20CERCHAS.glb", imageUrl: "https://placehold.co/80x60/795548/ffffff?text=Latillas" },
+            { name: "Protector Cubierta", file: "10%20PROTECTOR%20CUBIERTA.glb", imageUrl: "https://placehold.co/80x60/455a64/ffffff?text=Protector" },
+            { name: "Cubierta", file: "11%20CUBIERTA.glb", imageUrl: "https://placehold.co/80x60/607d8b/ffffff?text=Cubierta" }
+        ];
+
+        // --- Inicialización ---
+        function init() {
+            initMainScene();
+            initViewCube();
+            initMiniView();
+            loadAllModels();
+            setupUI();
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        // --- Escena Principal ---
+        function initMainScene() {
+            const container = document.getElementById('container');
+            mainScene = new THREE.Scene();
+            mainScene.background = new THREE.Color(0xe5e7eb);
+            mainScene.fog = new THREE.Fog(0xe5e7eb, 150, 400);
+
+            mainCamera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 1000);
+            mainCamera.position.set(40, 30, 60);
+
+            mainRenderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            mainRenderer.setSize(container.clientWidth, container.clientHeight);
+            mainRenderer.setPixelRatio(window.devicePixelRatio);
+            mainRenderer.shadowMap.enabled = true;
+            container.appendChild(mainRenderer.domElement);
+
+            mainControls = new OrbitControls(mainCamera, mainRenderer.domElement);
+            mainControls.enableDamping = true;
+            
+            const ambient = new THREE.AmbientLight(0xffffff, 1.2);
+            mainScene.add(ambient);
+            const directional = new THREE.DirectionalLight(0xffffff, 2.5);
+            directional.position.set(60, 100, 50);
+            directional.castShadow = true;
+            directional.shadow.mapSize.set(2048, 2048);
+            mainScene.add(directional);
+            mainScene.add(allModels);
+        }
+
+        // --- Cubo de Vistas ---
+        function initViewCube() {
+            const container = document.getElementById('view-cube-container');
+            viewCubeRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            viewCubeRenderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(viewCubeRenderer.domElement);
+            
+            viewCubeScene = new THREE.Scene();
+            const dist = 5;
+            viewCubeCamera = new THREE.OrthographicCamera(-dist, dist, dist, -dist, 0.1, 100);
+            viewCubeCamera.position.set(0, 0, 10);
+
+            const textures = createViewCubeTextures();
+            const materials = textures.map(tex => new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, transparent: true }));
+            viewCube = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), materials);
+            viewCubeScene.add(viewCube);
+            
+            container.addEventListener('click', onViewCubeClick);
+        }
+
+        // --- Mini Visor ---
+        function initMiniView() {
+            const container = document.getElementById('mini-view-container');
+            miniViewRenderer = new THREE.WebGLRenderer({ antialias: true });
+            miniViewRenderer.setSize(container.clientWidth, container.clientHeight);
+            miniViewRenderer.shadowMap.enabled = true;
+            container.appendChild(miniViewRenderer.domElement);
+            
+            miniViewScene = new THREE.Scene();
+            miniViewScene.background = new THREE.Color(0xffffff);
+            miniViewCamera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 1000);
+            miniViewCamera.position.set(15, 15, 15);
+            miniViewCamera.lookAt(0,0,0);
+            
+            const ambient = new THREE.AmbientLight(0xffffff, 1.2);
+            miniViewScene.add(ambient);
+            const directional = new THREE.DirectionalLight(0xffffff, 2.5);
+            directional.position.set(10, 20, 15);
+            directional.castShadow = true;
+            miniViewScene.add(directional);
+
+            miniViewContent = new THREE.Group();
+            miniViewScene.add(miniViewContent);
+        }
+
+        // --- Carga de Modelos y UI ---
+        function loadAllModels() {
+            const loadingManager = new THREE.LoadingManager();
+            const gltfLoader = new GLTFLoader(loadingManager);
+            loadingManager.onLoad = () => {
+                document.getElementById('loading-overlay').style.display = 'none';
+                switchView('Ensamblaje');
+            };
+
+            modelFiles.forEach((modelInfo, index) => {
+                if (!modelInfo.file) { modelInfo.modelGroup = null; return; }
+                gltfLoader.load("https://raw.githubusercontent.com/ContenidoArquitectonico/Visor3D/main/" + modelInfo.file, (gltf) => {
+                    const model = gltf.scene;
+                    model.traverse(node => { if (node.isMesh) node.castShadow = true; });
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+                    model.position.sub(center);
+                    const group = new THREE.Group();
+                    group.add(model);
+                    group.name = modelInfo.name;
+                    group.userData = { isAssembled: false, index: index };
+                    allModels.add(group);
+                    modelInfo.modelGroup = group;
+                });
+            });
+        }
+        
+        function setupUI() {
+            const gallery = document.getElementById('views-gallery');
+            modelFiles.forEach(modelInfo => {
+                const card = document.createElement('div');
+                card.className = 'view-card';
+                card.id = `card-${modelInfo.name}`;
+                card.innerHTML = `<div class="card-content"><img src="${modelInfo.imageUrl}" alt="${modelInfo.name}"><span class="title">${modelInfo.name}</span></div><div id="check-${modelInfo.name}" class="hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-green-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg></div>`;
+                card.addEventListener('click', () => handleCardClick(modelInfo));
+                gallery.appendChild(card);
+            });
+            
+            document.getElementById('toggle-panel-btn').addEventListener('click', () => {
+                document.getElementById('controls-panel').classList.toggle('hidden');
+                document.getElementById('toggle-panel-btn').classList.toggle('panel-hidden');
+                setTimeout(onWindowResize, 400);
+            });
+        }
+
+        // --- Lógica de Interacción ---
+        function handleCardClick(modelInfo) {
+            if (currentView === 'Ensamblaje') {
+                if (modelInfo.name === 'Ensamblaje') {
+                    modelFiles.forEach(m => {
+                       if (m.modelGroup) m.modelGroup.userData.isAssembled = false;
+                       document.getElementById(`card-${m.name}`).classList.remove('assembled');
+                       document.getElementById(`check-${m.name}`).classList.add('hidden');
+                    });
+                    return;
+                }
+                const modelGroup = modelInfo.modelGroup;
+                if (!modelGroup) return;
+                modelGroup.userData.isAssembled = !modelGroup.userData.isAssembled;
+                document.getElementById(`card-${modelInfo.name}`).classList.toggle('assembled', modelGroup.userData.isAssembled);
+                document.getElementById(`check-${modelInfo.name}`).classList.toggle('hidden', !modelGroup.userData.isAssembled);
+            }
+             switchView(modelInfo.name);
+        }
+
+        function switchView(viewName) {
+            currentView = viewName;
+            document.querySelectorAll('.view-card').forEach(c => c.classList.remove('active'));
+            document.getElementById(`card-${viewName}`).classList.add('active');
+
+            allModels.children.forEach(group => group.visible = false);
+            miniViewContent.clear();
+
+            if (viewName === 'Ensamblaje') {
+                allModels.children.forEach(group => group.visible = true);
+                focusOnObject(allModels, false);
+                const clone = allModels.clone();
+                miniViewContent.add(clone);
+            } else {
+                const modelGroup = modelFiles.find(m => m.name === viewName)?.modelGroup;
+                if(modelGroup) {
+                    modelGroup.visible = true;
+                    modelGroup.position.set(0, 0, 0);
+                    focusOnObject(modelGroup, true);
+                    const clone = modelGroup.clone();
+                    miniViewContent.add(clone);
+                }
+            }
+            // Actualizar posiciones en mini-vista
+            if (miniViewContent.children[0]) {
+                const miniViewBox = new THREE.Box3().setFromObject(miniViewContent.children[0]);
+                const miniViewCenter = miniViewBox.getCenter(new THREE.Vector3());
+                miniViewContent.children[0].position.sub(miniViewCenter);
+            }
+        }
+        
+        function focusOnObject(object, isSingleView) {
+            const box = new THREE.Box3().setFromObject(object);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = mainCamera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            cameraZ *= isSingleView ? 1.8 : 2.5;
+            mainControls.target.copy(center);
+            gsap.to(mainCamera.position, { duration: 0.8, x: center.x, y: center.y + size.y * 0.2, z: center.z + cameraZ, ease: "power2.inOut" });
+        }
+        
+        function updateAnimations() {
+            if(currentView === 'Ensamblaje') {
+                const positions = {
+                    Terreno: new THREE.Vector3(0, 0, 0), Plintos: new THREE.Vector3(0, 1, 0),
+                    'Estructura Vigas': new THREE.Vector3(0, 1.5, 0), Pisos: new THREE.Vector3(0, 2, 0),
+                    Columnas: new THREE.Vector3(0, 5.5, 0), Paredes: new THREE.Vector3(0, 5.5, 0),
+                    Tumbado: new THREE.Vector3(0, 10, 0), Cerchas: new THREE.Vector3(0, 11, 0),
+                    'Latillas Cerchas': new THREE.Vector3(0, 11.5, 0),
+                    'Protector Cubierta': new THREE.Vector3(0, 12.5, 0), Cubierta: new THREE.Vector3(0, 13, 0)
+                };
+                const disassembledY = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+                allModels.children.forEach(group => {
+                    const targetPosition = group.userData.isAssembled ? positions[group.name] : new THREE.Vector3(0, disassembledY[group.userData.index-1], 0);
+                    if (!group.position.equals(targetPosition)) group.position.lerp(targetPosition, 0.07);
+                });
+            }
+        }
+
+        // --- Lógica del Cubo y Mini-Visor ---
+        function createViewCubeTextures() {
+            const labels = ['DERECHA', 'IZQUIERDA', 'SUPERIOR', 'INFERIOR', 'FRONTAL', 'POSTERIOR'];
+            return labels.map(label => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 256; canvas.height = 256;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.fillRect(0, 0, 256, 256);
+                ctx.fillStyle = '#4f46e5'; ctx.font = 'bold 32px Inter';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(label, 128, 128);
+                return new THREE.CanvasTexture(canvas);
+            });
+        }
+        
+        function onViewCubeClick(event) {
+            const rect = viewCubeRenderer.domElement.getBoundingClientRect();
+            const mouse = new THREE.Vector2(
+                ((event.clientX - rect.left) / rect.width) * 2 - 1,
+                -(((event.clientY - rect.top) / rect.height) * 2 - 1)
+            );
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, viewCubeCamera);
+            const intersects = raycaster.intersectObject(viewCube);
+            if (intersects.length > 0) {
+                const faceIndex = intersects[0].face.materialIndex;
+                const positions = [
+                    new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0), // D, I
+                    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0), // S, I
+                    new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1) // F, P
+                ];
+                const targetPos = positions[faceIndex].multiplyScalar(100).add(mainControls.target);
+                gsap.to(mainCamera.position, { duration: 0.8, x: targetPos.x, y: targetPos.y, z: targetPos.z, ease: "power2.inOut" });
+            }
+        }
+        
+        // --- Loop Principal y Redimensionado ---
+        const gsapScript = document.createElement('script');
+        gsapScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js';
+        document.head.appendChild(gsapScript);
+
+        function onWindowResize() {
+            const w = document.getElementById('container').clientWidth;
+            const h = document.getElementById('container').clientHeight;
+            mainCamera.aspect = w / h;
+            mainCamera.updateProjectionMatrix();
+            mainRenderer.setSize(w, h);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            mainControls.update();
+            updateAnimations();
+            
+            // Sincronizar cámaras
+            viewCubeCamera.position.copy(mainCamera.position);
+            viewCubeCamera.position.sub(mainControls.target);
+            viewCubeCamera.position.setLength(10);
+            viewCubeCamera.lookAt(viewCubeScene.position);
+            
+            // Renderizar escenas
+            mainRenderer.render(mainScene, mainCamera);
+            viewCubeRenderer.render(viewCubeScene, viewCubeCamera);
+            miniViewRenderer.render(miniViewScene, miniViewCamera);
+        }
+        
+        init();
+    </script>
 </body>
 </html>
